@@ -3,6 +3,7 @@
  * 让「结构 -> Schema」的逻辑可独立测试。
  */
 import { FieldNode, FieldType, SCALAR_TYPES, uid } from './types';
+import { FragmentLibrary, convertToRef, inlineRef, isRefNode } from './fragments';
 
 export interface NodeLocation {
   parent: FieldNode | null;
@@ -16,7 +17,6 @@ export function walk(node: FieldNode, fn: (n: FieldNode, parent: FieldNode | nul
   node.children?.forEach((c) => walk(c, fn, node));
   if (node.item) walk(node.item, fn, node);
 }
-
 export function findById(root: FieldNode, id: string): FieldNode | undefined {
   let hit: FieldNode | undefined;
   walk(root, (n) => {
@@ -63,6 +63,7 @@ export function createNode(type: FieldType = 'string', name = ''): FieldNode {
 export function addField(root: FieldNode, parentId: string | null, type: FieldType = 'string'): FieldNode | undefined {
   const parent = parentId ? findById(root, parentId) : root;
   if (!parent || parent.type !== 'object') return undefined;
+  if (isRefNode(parent)) return undefined; // 引用节点是只读链路，不能直接挂子字段
   parent.children = parent.children ?? [];
   const node = createNode(type, uniqueName(parent));
   parent.children.push(node);
@@ -118,10 +119,11 @@ export function updateNode(root: FieldNode, id: string, patch: Partial<FieldNode
   return node;
 }
 
-/** 切换字段类型：清掉与新类型不兼容的结构与约束 */
+/** 切换字段类型：清掉与新类型不兼容的结构与约束（引用节点需先内联或直接转引用） */
 export function changeType(root: FieldNode, id: string, next: FieldType): FieldNode | undefined {
   const node = findById(root, id);
   if (!node || node.type === next) return node;
+  if (isRefNode(node)) return undefined; // 引用节点没有自身类型可切换
 
   const prev = node.type;
   node.type = next;
@@ -176,11 +178,30 @@ function stripScalar(node: FieldNode, keepAll = false): void {
 export function setArrayItemType(root: FieldNode, arrayId: string, itemType: FieldType): void {
   const arr = findById(root, arrayId);
   if (!arr || arr.type !== 'array') return;
+  if (arr.item && isRefNode(arr.item)) return; // item 为片段引用时不能直接换类型（先内联）
   if (!arr.item) {
     arr.item = createNode(itemType, '$item');
     return;
   }
   changeType(root, arr.item.id, itemType);
+}
+
+/* ---------------- 片段引用：结构区「转换 / 收编」动作 ---------------- */
+
+/** 把结构中的某个内嵌节点转换为指向具名片段的引用节点 */
+export function convertNodeToRef(root: FieldNode, id: string, fragmentName: string): FieldNode | undefined {
+  const node = findById(root, id);
+  if (!node || isRefNode(node)) return undefined;
+  convertToRef(node, fragmentName);
+  return node;
+}
+
+/** 把结构中的某个引用节点收编为内嵌定义（片段当前内容的快照副本） */
+export function inlineNodeRef(root: FieldNode, id: string, library: FragmentLibrary): FieldNode | undefined {
+  const node = findById(root, id);
+  if (!node || !isRefNode(node)) return undefined;
+  inlineRef(node, library);
+  return node;
 }
 
 export function emptyRoot(title = '未命名表单'): FieldNode {

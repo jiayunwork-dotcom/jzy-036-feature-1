@@ -36,6 +36,26 @@ export interface VersionRecord {
   note: string | null;
 }
 
+export interface FragmentSummary {
+  name: string;
+  title: string | null;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FragmentRecord extends FragmentSummary {
+  content: string;
+}
+
+export interface FragmentReference {
+  kind: 'document' | 'fragment';
+  documentId?: number;
+  documentName?: string;
+  fragmentName?: string;
+  path: string;
+}
+
 export const api = {
   health: () => jsonFetch<{ ok: boolean }>('/api/health'),
 
@@ -75,4 +95,39 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+
+  /* ---------------- 片段（可复用结构片段） ---------------- */
+  listFragments: () => jsonFetch<{ fragments: FragmentSummary[] }>('/api/fragments'),
+  getFragment: (name: string) =>
+    jsonFetch<{ fragment: FragmentRecord }>(`/api/fragments/${encodeURIComponent(name)}`),
+  createFragment: (name: string, content: string, title?: string) =>
+    jsonFetch<{ fragment: FragmentRecord; version: number }>('/api/fragments', {
+      method: 'POST',
+      body: JSON.stringify({ name, content, title }),
+    }),
+  saveFragment: (name: string, content: string, expectedRevision: number, note?: string, title?: string) =>
+    jsonFetch<{ fragment: FragmentRecord; version: number }>(
+      `/api/fragments/${encodeURIComponent(name)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ content, expectedRevision, note, title }),
+      },
+    ),
+  deleteFragment: (name: string, cascade = false) =>
+    jsonFetch<{ ok?: boolean; cascaded?: boolean; references?: FragmentReference[] }>(
+      `/api/fragments/${encodeURIComponent(name)}?cascade=${cascade ? 'true' : 'false'}`,
+      { method: 'DELETE' },
+    ),
+  fragmentReferences: (name: string) =>
+    jsonFetch<{ references: FragmentReference[] }>(
+      `/api/fragments/${encodeURIComponent(name)}/references`,
+    ),
+  fragmentVersions: (name: string) =>
+    jsonFetch<{ versions: VersionRecord[] }>(
+      `/api/fragments/${encodeURIComponent(name)}/versions`,
+    ),
+  getFragmentVersion: (name: string, version: number) =>
+    jsonFetch<{ version: VersionRecord }>(
+      `/api/fragments/${encodeURIComponent(name)}/versions/${version}`,
+    ),
 };

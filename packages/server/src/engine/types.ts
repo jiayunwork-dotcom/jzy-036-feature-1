@@ -17,7 +17,17 @@ export interface FieldNode {
   id: string;
   /** 字段名；根节点固定为 ''  */
   name: string;
-  type: FieldType;
+  /**
+   * 节点类型。内嵌定义节点必有类型；引用节点（ref 非空）没有自身类型，
+   * 其「真实类型」在控件映射 / 校验时穿透到片段定义取得。
+   */
+  type?: FieldType;
+  /**
+   * 引用节点：指向片段库中某个具名片段（形如 `contactAddress`）。
+   * 与 type/children/item/各类约束互斥——引用节点不是片段内容的复制品，
+   * 而是一条指向同一份定义的链路。
+   */
+  ref?: string;
   title?: string;
   description?: string;
   required?: boolean;
@@ -43,6 +53,8 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: s
 
 export type JsonSchemaObject = {
   type?: string;
+  /** 引用某个具名片段，写法 `fragment:片段名`；引用节点不得再声明其他结构/约束关键字 */
+  $ref?: string;
   title?: string;
   description?: string;
   required?: string[];

@@ -20,7 +20,10 @@ import {
   removeNode,
   updateNode,
 } from '@engine/tree';
+import { isRefNode, refNodeType } from '@engine/fragments';
 import { ALL_TYPES } from '@engine/types';
+import { fragmentsState } from '../stores/fragments';
+import { convertFieldToRef, inlineFieldRef } from '../stores/syncSession';
 
 const props = defineProps<{
   root: FieldNode;
@@ -31,6 +34,14 @@ const props = defineProps<{
 
 const isRoot = computed(() => props.depth === 0);
 const isItem = computed(() => props.node.name === '$item');
+const isRef = computed(() => isRefNode(props.node));
+/** 引用节点穿透片段定义拿到的真实类型（控件选择语义） */
+const resolvedType = computed(() =>
+  isRef.value ? refNodeType(props.node, fragmentsState.library) ?? '?' : props.node.type,
+);
+const refTargetExists = computed(() =>
+  isRef.value ? !!fragmentsState.library[props.node.ref!] : true,
+);
 
 function mutate(fn: () => void): void {
   fn();
@@ -133,6 +144,23 @@ const enumText = computed({
 function canIndent(): boolean {
   return !isRoot.value && !isItem.value;
 }
+
+/* ---------------- 片段引用：转换为引用 / 收编为内嵌 ---------------- */
+
+function onConvertToRef(e: Event): void {
+  const name = (e.target as HTMLSelectElement).value;
+  if (!name) return;
+  if (window.confirm(`把该字段转换为对片段「${name}」的引用？当前内嵌结构将被引用链路替代。`)) {
+    if (!convertFieldToRef(props.node.id, name)) props.changed();
+  }
+  (e.target as HTMLSelectElement).value = '';
+}
+
+function onInlineRef(): void {
+  if (window.confirm('把该引用收编为内嵌定义？将复制片段当前内容为独立快照，之后不再随片段更新。')) {
+    if (!inlineFieldRef(props.node.id)) props.changed();
+  }
+}
 </script>
 
 <template>
@@ -148,7 +176,14 @@ function canIndent(): boolean {
       <strong v-else-if="isRoot">📋 根对象</strong>
       <span v-else class="hint">数组项</span>
 
-      <select v-if="!isItem" :value="node.type" @change="onType" title="字段类型">
+      <!-- 引用节点：醒目标记，类型穿透自片段定义（不可直接切换类型） -->
+      <template v-if="isRef">
+        <span class="ref-badge" :class="{ dangling: !refTargetExists }" :title="refTargetExists ? '片段引用（跟随片段定义更新）' : '引用的片段不存在'">
+          🔗 fragment:{{ node.ref }}
+        </span>
+        <span class="type-tag">真实类型：{{ resolvedType }}</span>
+      </template>
+      <select v-else-if="!isItem" :value="node.type" @change="onType" title="字段类型">
         <option v-for="t in ALL_TYPES" :key="t" :value="t">{{ t }}</option>
       </select>
       <span v-else class="type-tag">item: {{ node.item?.type ?? '?' }}</span>
@@ -160,6 +195,22 @@ function canIndent(): boolean {
       <button v-if="node.type === 'object'" class="tiny" title="添加对象" @click="addChild('object')">＋对象</button>
       <button v-if="node.type === 'object'" class="tiny" title="添加数组" @click="addChild('array')">＋数组</button>
       <template v-if="!isRoot && !isItem">
+        <!-- 内嵌 -> 引用：选择一个已有片段 -->
+        <select
+          v-if="!isRef"
+          class="convert-ref"
+          title="转换为引用某个已有片段"
+          @change="onConvertToRef"
+        >
+          <option value="">🔗 转为片段引用…</option>
+          <option v-for="f in fragmentsState.fragments" :key="f.name" :value="f.name">
+            {{ f.name }}{{ f.title ? `（${f.title}）` : '' }}
+          </option>
+        </select>
+        <!-- 引用 -> 内嵌快照 -->
+        <button v-else class="tiny" title="收编为内嵌定义（复制片段当前内容，之后独立）" @click="onInlineRef">
+          ␡ 收编为内嵌
+        </button>
         <button class="tiny" title="上移" @click="up">↑</button>
         <button class="tiny" title="下移" @click="down">↓</button>
         <button class="tiny" title="缩进（成为前一个对象的子字段）" :disabled="!canIndent()" @click="indent">→|</button>
@@ -168,7 +219,26 @@ function canIndent(): boolean {
       </template>
     </div>
 
-    <div class="node-detail">
+    <!-- 引用节点：只显示展示信息（title/description/required），约束在片段定义处维护 -->
+    <div v-if="isRef" class="node-detail">
+      <div class="detail-grid">
+        <label>标题</label>
+        <input :value="node.title ?? ''" @change="onTitle" placeholder="缺省取片段定义标题" />
+        <template v-if="!isRoot">
+          <label>必填</label>
+          <label style="text-align: left">
+            <input type="checkbox" :checked="!!node.required" @change="onRequired" /> 必填字段
+          </label>
+        </template>
+        <label>说明</label>
+        <input class="span2" :value="node.description ?? ''" @change="onDescription" placeholder="缺省取片段定义说明" />
+      </div>
+      <div v-if="!refTargetExists" class="ref-warning">
+        ⚠ 片段「{{ node.ref }}」当前不存在：该引用处于非法态，请创建片段或改引用，结构区其余部分不受影响。
+      </div>
+    </div>
+
+    <div v-else class="node-detail">
       <div class="detail-grid">
         <label>标题</label>
         <input :value="node.title ?? ''" @change="onTitle" placeholder="展示给填写者的名称" />
@@ -229,8 +299,8 @@ function canIndent(): boolean {
       </div>
     </div>
 
-    <!-- object 子字段 -->
-    <template v-if="node.type === 'object'">
+    <!-- object 子字段（引用节点不在这里展开——它是链路，不是复制品） -->
+    <template v-if="!isRef && node.type === 'object'">
       <SchemaNode
         v-for="child in node.children"
         :key="child.id"
@@ -245,7 +315,7 @@ function canIndent(): boolean {
     </template>
 
     <!-- array item -->
-    <template v-if="node.type === 'array' && node.item">
+    <template v-if="!isRef && node.type === 'array' && node.item">
       <SchemaNode :root="root" :node="node.item" :depth="depth + 1" :changed="changed" />
     </template>
   </div>

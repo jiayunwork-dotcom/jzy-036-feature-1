@@ -4,7 +4,9 @@ import StructureEditor from './components/StructureEditor.vue';
 import TextEditor from './components/TextEditor.vue';
 import FormPreview from './components/FormPreview.vue';
 import VersionsDialog from './components/VersionsDialog.vue';
+import FragmentsDialog from './components/FragmentsDialog.vue';
 import { session, loadText, onTextInput } from './stores/syncSession';
+import { refreshFragments } from './stores/fragments';
 import {
   docsState,
   refreshList,
@@ -18,12 +20,15 @@ import {
 } from './stores/docs';
 
 const showVersions = ref(false);
+const showFragments = ref(false);
 const nameEditing = ref(false);
 const nameDraft = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 
 onMounted(async () => {
   try {
+    // 先加载片段库（晚绑定）：随后载入的文档若含 $ref 即可正确解析/展开
+    await refreshFragments().catch(() => undefined);
     await refreshList();
     // 默认载入预置示范文档，保证打开即「三侧一致、可交互」
     const demo = docsState.documents[0];
@@ -139,6 +144,7 @@ function onImportFile(e: Event): void {
       <button class="tiny" :disabled="!docsState.currentId" @click="showVersions = true">
         历史版本（{{ docsState.versions.length }}）
       </button>
+      <button class="tiny" @click="showFragments = true">🧩 片段库</button>
       <span class="spacer" />
       <button class="tiny" @click="onImportClick">导入 Schema</button>
       <button class="tiny" @click="onExport">导出 Schema</button>
@@ -156,6 +162,7 @@ function onImportFile(e: Event): void {
     </div>
 
     <VersionsDialog v-if="showVersions" @close="showVersions = false" />
+    <FragmentsDialog v-if="showFragments" @close="showFragments = false" />
     <div v-if="docsState.message" class="flash">{{ docsState.message }}</div>
   </div>
 </template>

@@ -14,6 +14,7 @@ import {
   SchemaEngineError,
   uid,
 } from './types';
+import { FragmentLibrary, parseRef, validateRefs } from './fragments';
 
 const SUPPORTED_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array']);
 
@@ -117,6 +118,30 @@ function convertSchema(schema: JsonSchemaObject, name: string, path: string): Fi
   if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
     throw new SchemaEngineError('Schema 节点必须是 JSON 对象', path);
   }
+
+  // 片段引用节点：`{ "$ref": "fragment:xxx" }`（引用处仅可附 title/description）
+  if (schema.$ref !== undefined) {
+    const refName = parseRef(schema.$ref);
+    if (!refName) {
+      throw new SchemaEngineError(
+        `非法 $ref「${schema.$ref}」：引用片段必须写作 fragment:片段名`,
+        path,
+      );
+    }
+    const allowed = new Set(['$ref', 'title', 'description']);
+    const illegal = Object.keys(schema).filter((k) => !allowed.has(k));
+    if (illegal.length > 0) {
+      throw new SchemaEngineError(
+        `片段引用「${refName}」处不能再声明 ${illegal.join('、')}（约束统一由片段定义）`,
+        path,
+      );
+    }
+    const refNode: FieldNode = { id: uid(), name, ref: refName };
+    if (typeof schema.title === 'string') refNode.title = schema.title;
+    if (typeof schema.description === 'string') refNode.description = schema.description;
+    return refNode;
+  }
+
   const type = inferType(schema, path);
   if (!type) {
     throw new SchemaEngineError('无法确定字段类型：请声明 type，或提供 properties/items/enum/default', path || name);
@@ -205,8 +230,18 @@ function readNonNegativeInt(v: JsonValue | undefined, keyword: string, path: str
   return n;
 }
 
+export interface ParseOptions {
+  /**
+   * 片段库。提供时校验文档中的 $ref（悬空/闭环 -> ok:false，归入非法态）。
+   * 不传则只做结构解析，不解析引用目标（供片段定义本身在入库前解析使用）。
+   */
+  library?: FragmentLibrary;
+  /** 为 true 时允许根节点为任意类型（片段定义可以是标量/数组）；默认根必须是 object */
+  allowNonObjectRoot?: boolean;
+}
+
 /** 解析 Schema 文本；非法时返回结构化错误（不抛异常） */
-export function parseSchemaText(text: string): ParseResult {
+export function parseSchemaText(text: string, options: ParseOptions = {}): ParseResult {
   const trimmed = text.trim();
   if (!trimmed) return fail('Schema 内容为空');
   let json: unknown;
@@ -221,10 +256,17 @@ export function parseSchemaText(text: string): ParseResult {
   }
   try {
     const rootType = json.type;
-    if (rootType !== undefined && rootType !== 'object') {
+    if (json.$ref !== undefined && options.allowNonObjectRoot && rootType === undefined) {
+      return fail('片段定义必须直接声明结构（根节点不能只是 $ref 引用）');
+    }
+    if (!options.allowNonObjectRoot && json.$ref === undefined && rootType !== undefined && rootType !== 'object') {
       return fail(`根 Schema 的 type 必须是 object（当前为「${String(rootType)}」）`);
     }
     const model = convertSchema(json, '', '');
+    if (options.library) {
+      const issues = validateRefs(model, options.library);
+      if (issues.length > 0) return fail(issues.map((i) => i.message).join('；'));
+    }
     return { ok: true, model, schema: json };
   } catch (e) {
     if (e instanceof SchemaEngineError) return fail(e.message);
@@ -232,9 +274,9 @@ export function parseSchemaText(text: string): ParseResult {
   }
 }
 
-/** 由已解析的 Schema 对象构建模型（受信调用方使用） */
-export function schemaToModel(schema: JsonSchemaObject): FieldNode {
-  const result = parseSchemaText(JSON.stringify(schema));
+/** 由已解析的 Schema 对象构建模型（受信调用方使用）；默认不校验片段引用 */
+export function schemaToModel(schema: JsonSchemaObject, options: ParseOptions = {}): FieldNode {
+  const result = parseSchemaText(JSON.stringify(schema), options);
   if (!result.ok || !result.model) throw new SchemaEngineError(result.error ?? '解析失败');
   return result.model;
 }

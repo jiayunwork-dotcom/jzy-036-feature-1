@@ -3,6 +3,7 @@
  * 校验按结构模型（即合法 Schema 的等价表达）执行，返回定位到字段路径的错误。
  */
 import { FieldNode, JsonValue } from './types';
+import { FragmentLibrary, expandModel, expandNode } from './fragments';
 
 export type PathSeg = string | number;
 
@@ -57,12 +58,16 @@ export function deepSet(data: Record<string, unknown>, path: PathSeg[], value: u
   cur[path[path.length - 1] as string] = value;
 }
 
-/** 依据默认值初始化一份表单数据（布尔缺省 false，数组缺省空数组） */
-export function initData(node: FieldNode): JsonValue | undefined {
+/** 依据默认值初始化一份表单数据（布尔缺省 false，数组缺省空数组）；引用按片段当前定义展开 */
+export function initData(node: FieldNode, library: FragmentLibrary = {}): JsonValue | undefined {
+  return initDataNode(expandNode(node, library));
+}
+
+function initDataNode(node: FieldNode): JsonValue | undefined {
   if (node.type === 'object') {
     const obj: Record<string, JsonValue> = {};
     for (const child of node.children ?? []) {
-      const v = initData(child);
+      const v = initDataNode(child);
       if (v !== undefined) obj[child.name] = v;
     }
     return obj;
@@ -75,9 +80,9 @@ export function initData(node: FieldNode): JsonValue | undefined {
   return undefined;
 }
 
-/** 新增一个数组项时使用的空数据（带默认值） */
-export function initItemData(item: FieldNode): JsonValue {
-  const v = initData(item);
+/** 新增一个数组项时使用的空数据（带默认值）；item 为引用时按片段定义初始化 */
+export function initItemData(item: FieldNode, library: FragmentLibrary = {}): JsonValue {
+  const v = initDataNode(expandNode(item, library));
   return (v ?? {}) as JsonValue;
 }
 
@@ -168,19 +173,28 @@ function validateNode(node: FieldNode, value: unknown, path: PathSeg[], errors: 
   }
 }
 
-/** 校验整份表单数据；返回所有违例（按字段路径定位），空数组表示通过 */
-export function validateForm(root: FieldNode, data: FormData): FieldError[] {
-  if (root.type !== 'object') return [{ path: [], loc: '', message: '根节点必须是 object' }];
+/**
+ * 校验整份表单数据；返回所有违例（按字段路径定位），空数组表示通过。
+ * 引用在校验前按片段库当前定义穿透展开——改一次片段，所有引用处的校验即时生效。
+ */
+export function validateForm(root: FieldNode, data: FormData, library: FragmentLibrary = {}): FieldError[] {
+  const expanded = expandModel(root, library);
+  if (expanded.type !== 'object') return [{ path: [], loc: '', message: '根节点必须是 object' }];
   const errors: FieldError[] = [];
-  for (const child of root.children ?? []) {
+  for (const child of expanded.children ?? []) {
     validateNode(child, (data as Record<string, unknown>)[child.name], [child.name], errors);
   }
   return errors;
 }
 
 /** 只校验单个字段（失焦时实时提示用） */
-export function validateField(root: FieldNode, data: FormData, path: PathSeg[]): FieldError[] {
-  const all = validateForm(root, data);
+export function validateField(
+  root: FieldNode,
+  data: FormData,
+  path: PathSeg[],
+  library: FragmentLibrary = {},
+): FieldError[] {
+  const all = validateForm(root, data, library);
   const prefix = formatLoc(path);
   return all.filter((e) => e.loc === prefix || e.loc.startsWith(`${prefix}[`) || e.loc.startsWith(`${prefix}.`));
 }

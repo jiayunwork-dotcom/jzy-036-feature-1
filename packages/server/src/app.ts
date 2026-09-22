@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { createRepository, openDatabase, Repository } from './db';
 import { createSchemaRouter } from './routes/schema';
 import { createDocsRouter } from './routes/docs';
+import { createFragmentsRouter } from './routes/fragments';
 import { DEMO_SCHEMA } from './engine/demo';
 
 export interface AppContext {
@@ -25,8 +26,9 @@ export function createApp(dbPath: string): AppContext {
     res.json({ ok: true, service: 'json-schema-form-builder' });
   });
 
-  app.use('/api/schema', createSchemaRouter());
+  app.use('/api/schema', createSchemaRouter(repo));
   app.use('/api/documents', createDocsRouter(repo));
+  app.use('/api/fragments', createFragmentsRouter(repo));
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: '接口不存在' });
@@ -53,4 +55,28 @@ export function ensureDemoDocument(repo: Repository): number {
   if (existing) return existing.id;
   const doc = repo.createDoc({ name: DEMO_DOC_NAME, content: JSON.stringify(DEMO_SCHEMA, null, 2) + '\n' });
   return doc.id;
+}
+
+/**
+ * 预置示范片段：一张「联系人」片段，演示「定义一次、多处引用」。
+ * 片段库为空的新环境才播种，已存在同名片段则跳过（片段名为身份，不覆盖用户修改）。
+ */
+export function ensureDemoFragments(repo: Repository): void {
+  if (repo.getFragment('contactPerson')) return;
+  const contactPerson = {
+    type: 'object',
+    title: '联系人',
+    description: '可复用片段：主联系人/备用联系人共用同一套字段与约束',
+    required: ['name', 'phone'],
+    properties: {
+      name: { type: 'string', title: '姓名', minLength: 2, maxLength: 20 },
+      phone: { type: 'string', title: '联系电话', pattern: '^1\\d{10}$' },
+      email: { type: 'string', title: '邮箱', pattern: '^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$' },
+    },
+  };
+  repo.createFragment({
+    name: 'contactPerson',
+    title: '联系人',
+    content: JSON.stringify(contactPerson, null, 2) + '\n',
+  });
 }

@@ -9,11 +9,13 @@
  */
 import { Router, Request, Response } from 'express';
 import { Repository } from '../db';
-import { parseSchemaText } from '../engine/parser';
+import { buildLibrary, validateDocumentText } from '../engine/fragmentService';
 
-function validateContent(content: unknown): { ok: true } | { ok: false; error: string } {
+/** 保存/导入边界权威校验：语法合法、受支持子集、片段引用全部可解析可展开（无悬空/闭环） */
+function validateContent(repo: Repository, content: unknown): { ok: true } | { ok: false; error: string } {
   if (typeof content !== 'string') return { ok: false, error: 'content 必须是字符串' };
-  const result = parseSchemaText(content);
+  const { library } = buildLibrary(repo);
+  const result = validateDocumentText(content, library);
   if (!result.ok) return { ok: false, error: result.error ?? 'Schema 不合法' };
   return { ok: true };
 }
@@ -28,7 +30,7 @@ export function createDocsRouter(repo: Repository): Router {
       res.status(400).json({ error: 'name 必填' });
       return;
     }
-    const check = validateContent(content);
+    const check = validateContent(repo, content);
     if (!check.ok) {
       res.status(400).json({ error: `无法保存非法 Schema：${check.error}` });
       return;
@@ -77,7 +79,7 @@ export function createDocsRouter(repo: Repository): Router {
       res.status(400).json({ error: 'expectedRevision 必须是整数（用于并发保护）' });
       return;
     }
-    const check = validateContent(content);
+    const check = validateContent(repo, content);
     if (!check.ok) {
       res.status(400).json({ error: `无法保存非法 Schema：${check.error}` });
       return;

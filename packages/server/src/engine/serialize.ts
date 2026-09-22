@@ -3,6 +3,7 @@
  * 输出字段顺序固定，保证「结构 -> 文本 -> 再解析」往返结果稳定可比较。
  */
 import { FieldNode, FieldType, JsonSchemaObject, SchemaEngineError } from './types';
+import { REF_PREFIX, isRefNode } from './fragments';
 
 function assignScalarConstraints(schema: JsonSchemaObject, node: FieldNode): void {
   if (node.type === 'string') {
@@ -26,7 +27,14 @@ function convertNode(node: FieldNode, path: string): JsonSchemaObject {
   if (!node || typeof node !== 'object') {
     throw new SchemaEngineError('字段节点不是对象', path);
   }
-  if (!ALL_TYPES.includes(node.type)) {
+  // 引用节点：原样输出为 $ref 链路，绝不把片段内容抄展开
+  if (isRefNode(node)) {
+    const schema: JsonSchemaObject = { $ref: `${REF_PREFIX}${node.ref}` };
+    if (node.title) schema.title = node.title;
+    if (node.description) schema.description = node.description;
+    return schema;
+  }
+  if (!node.type || !ALL_TYPES.includes(node.type)) {
     throw new SchemaEngineError(`未知字段类型「${String(node.type)}」`, path || node.name);
   }
   if (node.pattern) {
@@ -106,14 +114,22 @@ const ALL_TYPES: FieldType[] = ['string', 'number', 'integer', 'boolean', 'objec
 export function modelToSchema(root: FieldNode): JsonSchemaObject {
   if (!root || root.type !== 'object') {
     throw new SchemaEngineError('根节点必须是 object 类型');
-  }
-  const schema = convertNode(root, '');
+  }  const schema = convertNode(root, '');
   if (root.title) schema.title = root.title;
   if (root.description) schema.description = root.description;
   return schema;
 }
 
-/** 序列化为格式化文本 */
+/** 序列化为格式化文本（根为 object） */
 export function modelToSchemaText(root: FieldNode, indent = 2): string {
   return JSON.stringify(modelToSchema(root), null, indent) + '\n';
+}
+
+/** 片段定义专用：根可以是任意受支持类型（片段不要求是 object），但根本身必须是直接定义 */
+export function modelToSchemaTextAny(root: FieldNode, indent = 2): string {
+  if (!root.type || !ALL_TYPES.includes(root.type)) {
+    throw new SchemaEngineError(`未知字段类型「${String(root.type)}」`);
+  }
+  checkRange(root, '');
+  return JSON.stringify(convertNode(root, ''), null, indent) + '\n';
 }

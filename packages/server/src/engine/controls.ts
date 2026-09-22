@@ -7,6 +7,7 @@
  * array -> arraylist（可增删重复项）
  */
 import { FieldNode, WidgetType } from './types';
+import { FragmentLibrary, expandModel } from './fragments';
 
 export interface ControlNode {
   id: string;
@@ -90,8 +91,12 @@ export function mapControl(node: FieldNode): ControlNode {
   return mapScalar(node);
 }
 
-/** 控件映射 HTTP 接口使用的纯函数 */
-export function modelToControls(root: FieldNode): ControlNode {
-  if (root.type !== 'object') throw new Error('根节点必须是 object');
-  return mapControl(root);
+/**
+ * 控件映射：先按片段库当前定义把引用穿透展开（选对控件、取到真实类型与约束），
+ * 再映射为控件树。片段定义一改，所有引用处的控件即时随之改变。
+ */
+export function modelToControls(root: FieldNode, library: FragmentLibrary = {}): ControlNode {
+  const expanded = expandModel(root, library);
+  if (expanded.type !== 'object') throw new Error('根节点必须是 object');
+  return mapControl(expanded);
 }
