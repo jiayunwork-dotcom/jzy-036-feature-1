@@ -1,8 +1,19 @@
 /**
  * 结构模型 -> JSON Schema（modelToSchema）。
  * 输出字段顺序固定，保证「结构 -> 文本 -> 再解析」往返结果稳定可比较。
+ *
+ * 引用节点（RefNode）序列化为 {"$fragment": "<key>"}：存的是指向片段的
+ * 链路，而不是片段内容的复制品；内嵌定义节点才展开输出完整 Schema。
  */
-import { FieldNode, FieldType, JsonSchemaObject, SchemaEngineError } from './types';
+import {
+  FieldNode,
+  FieldType,
+  JsonSchemaObject,
+  RefNode,
+  SchemaEngineError,
+  StructureNode,
+  isRef,
+} from './types';
 
 function assignScalarConstraints(schema: JsonSchemaObject, node: FieldNode): void {
   if (node.type === 'string') {
@@ -22,10 +33,17 @@ function assignScalarConstraints(schema: JsonSchemaObject, node: FieldNode): voi
   }
 }
 
-function convertNode(node: FieldNode, path: string): JsonSchemaObject {
+function convertNode(node: StructureNode, path: string): JsonSchemaObject {
   if (!node || typeof node !== 'object') {
     throw new SchemaEngineError('字段节点不是对象', path);
   }
+
+  // 引用：原样输出链路；引用处只声明指针，不展开片段定义
+  if (isRef(node)) {
+    if (!node.ref) throw new SchemaEngineError('引用节点缺少片段 key', path);
+    return { $fragment: node.ref };
+  }
+
   if (!ALL_TYPES.includes(node.type)) {
     throw new SchemaEngineError(`未知字段类型「${String(node.type)}」`, path || node.name);
   }
@@ -48,7 +66,13 @@ function convertNode(node: FieldNode, path: string): JsonSchemaObject {
     const properties: Record<string, JsonSchemaObject> = {};
     const required: string[] = [];
     for (const child of node.children ?? []) {
-      if (!child.name) throw new SchemaEngineError('对象属性缺少字段名', path);
+      if (isRef(child)) {
+        if (!child.name || child.name === '$item') {
+          throw new SchemaEngineError('引用属性缺少字段名', path);
+        }
+      } else if (!child.name) {
+        throw new SchemaEngineError('对象属性缺少字段名', path);
+      }
       if (Object.prototype.hasOwnProperty.call(properties, child.name)) {
         throw new SchemaEngineError(`字段名「${child.name}」在同一对象下重复`, path);
       }
@@ -117,3 +141,10 @@ export function modelToSchema(root: FieldNode): JsonSchemaObject {
 export function modelToSchemaText(root: FieldNode, indent = 2): string {
   return JSON.stringify(modelToSchema(root), null, indent) + '\n';
 }
+
+/** 片段定义（任意类型根）序列化为文本 */
+export function nodeToSchemaText(root: StructureNode, indent = 2): string {
+  return JSON.stringify(convertNode(root, ''), null, indent) + '\n';
+}
+
+export type { RefNode };

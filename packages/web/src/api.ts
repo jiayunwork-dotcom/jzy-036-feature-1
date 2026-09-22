@@ -36,6 +36,25 @@ export interface VersionRecord {
   note: string | null;
 }
 
+export interface FragmentRecord {
+  key: string;
+  title: string;
+  content: string;
+  revision: number;
+  archived: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FragmentReference {
+  kind: 'document' | 'fragment';
+  id: number | string;
+  name: string;
+  refKey: string;
+  path: string;
+  indirect: boolean;
+}
+
 export const api = {
   health: () => jsonFetch<{ ok: boolean }>('/api/health'),
 
@@ -75,4 +94,47 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+
+  // ---- 结构片段 ----
+  listFragments: () => jsonFetch<{ fragments: FragmentRecord[] }>('/api/fragments'),
+  createFragment: (key: string, title: string, content: string) =>
+    jsonFetch<{ fragment: FragmentRecord; version: number }>('/api/fragments', {
+      method: 'POST',
+      body: JSON.stringify({ key, title, content }),
+    }),
+  getFragment: (key: string) =>
+    jsonFetch<{ fragment: FragmentRecord }>(`/api/fragments/${encodeURIComponent(key)}`),
+  saveFragment: (
+    key: string,
+    payload: { content?: string; title?: string; expectedRevision: number; note?: string },
+  ) =>
+    jsonFetch<{ fragment: FragmentRecord; version: number }>(
+      `/api/fragments/${encodeURIComponent(key)}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    ),
+  fragmentUsage: (key: string) =>
+    jsonFetch<{ key: string; references: FragmentReference[] }>(
+      `/api/fragments/${encodeURIComponent(key)}/usage`,
+    ),
+  fragmentVersions: (key: string) =>
+    jsonFetch<{
+      versions: Array<{ version: number; revision: number; note: string | null; created_at: string }>;
+    }>(`/api/fragments/${encodeURIComponent(key)}/versions`),
+  deleteFragment: (key: string, mode?: 'reject' | 'detach') => {
+    const qs = mode === 'detach' ? '?mode=detach' : '';
+    return fetch(`/api/fragments/${encodeURIComponent(key)}${qs}`, { method: 'DELETE' }).then(
+      async (r) => {
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const err = new Error(
+            (body as { error?: string })?.error ?? `删除失败 (${r.status})`,
+          ) as Error & { status: number; body: unknown };
+          err.status = r.status;
+          err.body = body;
+          throw err;
+        }
+        return body;
+      },
+    );
+  },
 };

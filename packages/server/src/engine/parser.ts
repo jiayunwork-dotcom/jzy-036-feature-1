@@ -8,14 +8,81 @@
 import {
   FieldNode,
   FieldType,
+  FragmentLib,
   JsonSchemaObject,
   JsonValue,
   ParseResult,
+  RefNode,
   SchemaEngineError,
+  StructureNode,
+  createRefNode,
+  isField,
+  isRef,
   uid,
 } from './types';
 
 const SUPPORTED_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array']);
+
+export interface ParseOptions {
+  /**
+   * 片段库：默认 undefined（兼容老行为）。提供时，$fragment 引用会按库解析，
+   * 并在此处完成悬空 / 闭环检查（片段定义自身非法同样拒绝）。
+   */
+  lib?: FragmentLib;
+  /**
+   * 宽松模式：$fragment 引用不要求目标存在（构建片段库 / 校验片段保存时用，
+   * 悬空与闭环交给 validateFragmentGraph 统一判定）。
+   */
+  lenientRefs?: boolean;
+  /**
+   * 已知的片段图问题（key -> 原因，由 buildFragmentGraph/validateFragmentGraph 产出）。
+   * 严格解析文档时，只要文档引用到了问题片段（直接或间接），即判为非法：
+   * 闭环/悬空/片段定义非法一律挡在持久化与解析边界，不拖到渲染期。
+   */
+  fragmentErrors?: Map<string, string>;
+  /** 根节点是否必须是 object（文档 true；片段定义可任意类型） */
+  rootMustBeObject?: boolean;
+}
+
+/** 引用节点唯一允许的键 */
+const REF_ONLY = new Set(['$fragment']);
+
+/** 片段 key 规则：字母/数字/下划线/中划线，中划线不得开头 */
+const FRAGMENT_KEY_RE = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+
+/**
+ * 严格解析时递归验证片段定义内部的引用：目标须存在且不闭环。
+ * 片段定义自身的结构在入库解析时已校验，这里只查其引用可达性。
+ */
+function resolveFragmentDef(def: { root: StructureNode }, opts: ParseOptions, stack: string[]): void {
+  const lib = opts.lib;
+  if (!lib) return;
+  const walk = (n: StructureNode, chain: string[]): void => {
+    if (isRef(n)) {
+      const graphProblem = opts.fragmentErrors?.get(n.ref);
+      if (graphProblem) {
+        throw new SchemaEngineError(`引用的片段「${n.ref}」当前不可用：${graphProblem}`);
+      }
+      const target = lib.get(n.ref);
+      if (!target) {
+        if (!opts.lenientRefs) {
+          throw new SchemaEngineError(
+            `片段「${chain[0]}」的定义引用了不存在的片段「${n.ref}」`,
+          );
+        }
+        return;
+      }
+      if (chain.includes(n.ref)) {
+        throw new SchemaEngineError(`片段引用形成闭环：${[...chain, n.ref].join(' → ')}`);
+      }
+      walk(target.root, [...chain, n.ref]);
+      return;
+    }
+    for (const c of n.children ?? []) walk(c, chain);
+    if (n.item) walk(n.item, chain);
+  };
+  walk(def.root, stack);
+}
 
 function isSchemaObject(v: unknown): v is JsonSchemaObject {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -113,10 +180,61 @@ function checkDefault(d: JsonValue, type: FieldType, path: string): string | num
   throw new SchemaEngineError('对象/数组类型不支持默认值编辑', path);
 }
 
-function convertSchema(schema: JsonSchemaObject, name: string, path: string): FieldNode {
+function convertSchema(
+  schema: JsonSchemaObject,
+  name: string,
+  path: string,
+  opts: ParseOptions,
+  refStack: string[] = [],
+): StructureNode {
   if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
     throw new SchemaEngineError('Schema 节点必须是 JSON 对象', path);
   }
+
+  // 片段引用：{"$fragment": "key"} —— 解析为引用节点，绝不就地展开
+  if (typeof schema.$fragment === 'string') {
+    for (const k of Object.keys(schema)) {
+      if (!REF_ONLY.has(k)) {
+        throw new SchemaEngineError(
+          `$fragment 引用节点不允许同时携带「${k}」等其他定义（引用只是一条指向片段的链路）`,
+          path,
+        );
+      }
+    }
+    const key = schema.$fragment;
+    if (!FRAGMENT_KEY_RE.test(key)) {
+      throw new SchemaEngineError(
+        `非法片段 key「${key}」（字母/数字/下划线/中划线，且不以中划线开头）`,
+        path,
+      );
+    }
+    const node = createRefNode(key, name);
+
+    // 引用目标（或其依赖链）在片段图中已被标记问题：闭环 / 悬空 / 定义非法。
+    // 坏片段不会进入 lib，因此该检查必须先于 lib 查找。
+    const graphProblem = opts.fragmentErrors?.get(key);
+    if (graphProblem) {
+      throw new SchemaEngineError(`引用的片段「${key}」当前不可用：${graphProblem}`, path);
+    }
+
+    const def = opts.lib?.get(key);
+    if (def) {
+      if (refStack.includes(key)) {
+        throw new SchemaEngineError(
+          `片段引用形成闭环：${[...refStack, key].join(' → ')}`,
+          path,
+        );
+      }
+      // 穿透校验片段定义当前是否合法（定义内部的引用一并递归验证）
+      resolveFragmentDef(def, opts, [...refStack, key]);
+    } else if (opts.lib && !opts.lenientRefs) {
+      throw new SchemaEngineError(`引用了不存在的片段「${key}」`, path);
+    }
+    return node;
+  } else if (schema.$fragment !== undefined) {
+    throw new SchemaEngineError('$fragment 必须是字符串（片段 key）', path);
+  }
+
   const type = inferType(schema, path);
   if (!type) {
     throw new SchemaEngineError('无法确定字段类型：请声明 type，或提供 properties/items/enum/default', path || name);
@@ -147,8 +265,9 @@ function convertSchema(schema: JsonSchemaObject, name: string, path: string): Fi
       if (!isSchemaObject(rawSub)) {
         throw new SchemaEngineError(`字段「${key}」的 Schema 必须是对象`, path);
       }
-      const child = convertSchema(rawSub, key, path ? `${path}.${key}` : key);
-      child.required = required.has(key);
+      const child = convertSchema(rawSub, key, path ? `${path}.${key}` : key, opts, refStack);
+      // 引用节点：缺省（undefined）表示必填性取片段定义，仅在显式 required 时覆盖
+      if (required.has(key)) child.required = true;
       return child;
     });
     return node;
@@ -158,7 +277,7 @@ function convertSchema(schema: JsonSchemaObject, name: string, path: string): Fi
     if (!isSchemaObject(schema.items)) {
       throw new SchemaEngineError('数组必须声明 items（本工具支持同构数组）', path);
     }
-    node.item = convertSchema(schema.items, `${name}[]`, `${path}[]`);
+    node.item = convertSchema(schema.items, '$item', `${path}[]`, opts, refStack);
     return node;
   }
 
@@ -206,7 +325,8 @@ function readNonNegativeInt(v: JsonValue | undefined, keyword: string, path: str
 }
 
 /** 解析 Schema 文本；非法时返回结构化错误（不抛异常） */
-export function parseSchemaText(text: string): ParseResult {
+export function parseSchemaText(text: string, options: ParseOptions = {}): ParseResult {
+  const opts: ParseOptions = { rootMustBeObject: true, ...options };
   const trimmed = text.trim();
   if (!trimmed) return fail('Schema 内容为空');
   let json: unknown;
@@ -221,10 +341,14 @@ export function parseSchemaText(text: string): ParseResult {
   }
   try {
     const rootType = json.type;
-    if (rootType !== undefined && rootType !== 'object') {
+    const rootIsRef = typeof json.$fragment === 'string';
+    if (opts.rootMustBeObject && !rootIsRef && rootType !== undefined && rootType !== 'object') {
       return fail(`根 Schema 的 type 必须是 object（当前为「${String(rootType)}」）`);
     }
-    const model = convertSchema(json, '', '');
+    const model = convertSchema(json, '', '', opts) as FieldNode;
+    if (opts.rootMustBeObject && !isRef(model) && model.type !== 'object') {
+      return fail('根 Schema 必须是 object 类型');
+    }
     return { ok: true, model, schema: json };
   } catch (e) {
     if (e instanceof SchemaEngineError) return fail(e.message);
@@ -232,9 +356,9 @@ export function parseSchemaText(text: string): ParseResult {
   }
 }
 
-/** 由已解析的 Schema 对象构建模型（受信调用方使用） */
+/** 由已解析的 Schema 对象构建模型（受信调用方使用；不校验片段引用；根须为 object） */
 export function schemaToModel(schema: JsonSchemaObject): FieldNode {
   const result = parseSchemaText(JSON.stringify(schema));
   if (!result.ok || !result.model) throw new SchemaEngineError(result.error ?? '解析失败');
-  return result.model;
+  return result.model as FieldNode;
 }

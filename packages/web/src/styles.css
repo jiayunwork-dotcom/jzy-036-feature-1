@@ -435,3 +435,111 @@ pre.schema-dump {
   margin: 8px 0;
   white-space: pre-wrap;
 }
+
+/* ===== 片段引用节点 / 片段库管理 ===== */
+.ref-node {
+  border-left: 3px solid #7c5cff;
+  background: #f5f2ff;
+  border-radius: 0 6px 6px 0;
+  margin: 4px 0;
+}
+.ref-row {
+  align-items: center;
+  gap: 8px;
+}
+.ref-badge {
+  display: inline-block;
+  background: #7c5cff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.ref-badge.dangling {
+  background: #d64545;
+}
+.ref-key {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: #ece7ff;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.ref-dangling-text {
+  color: #d64545;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ref-detail {
+  padding: 4px 10px 8px 14px;
+  background: #faf8ff;
+}
+.add-ref-select,
+.convert-ref-select {
+  max-width: 120px;
+}
+.fragments-modal {
+  width: min(960px, 92vw);
+}
+.fragments-body {
+  display: flex;
+  gap: 0;
+  min-height: 420px;
+  padding: 0;
+}
+.frag-list {
+  width: 240px;
+  border-right: 1px solid #e5e9f0;
+  padding: 8px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+.frag-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.frag-row:hover {
+  background: #f2f4fa;
+}
+.frag-row.active {
+  background: #e7e2ff;
+}
+.frag-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #5a4b9e;
+}
+.frag-editor {
+  flex: 1;
+  padding: 12px 18px;
+  overflow: auto;
+}
+.frag-textarea {
+  width: 100%;
+  min-height: 260px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid #ccd3e0;
+  border-radius: 6px;
+  resize: vertical;
+}
+.usage-box {
+  margin-top: 12px;
+  border-top: 1px dashed #d3d9e6;
+  padding-top: 8px;
+}
+.usage-box ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.usage-box li {
+  padding: 3px 0;
+  font-size: 13px;
+}

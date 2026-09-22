@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import { createRepository, openDatabase, Repository } from './db';
 import { createSchemaRouter } from './routes/schema';
 import { createDocsRouter } from './routes/docs';
+import { createFragmentsRouter } from './routes/fragments';
 import { DEMO_SCHEMA } from './engine/demo';
 
 export interface AppContext {
@@ -25,8 +26,9 @@ export function createApp(dbPath: string): AppContext {
     res.json({ ok: true, service: 'json-schema-form-builder' });
   });
 
-  app.use('/api/schema', createSchemaRouter());
+  app.use('/api/schema', createSchemaRouter(repo));
   app.use('/api/documents', createDocsRouter(repo));
+  app.use('/api/fragments', createFragmentsRouter(repo));
 
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: '接口不存在' });

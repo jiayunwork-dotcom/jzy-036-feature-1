@@ -2,7 +2,7 @@
  * 预览表单数据初始化与约束校验（validate）。
  * 校验按结构模型（即合法 Schema 的等价表达）执行，返回定位到字段路径的错误。
  */
-import { FieldNode, JsonValue } from './types';
+import { FieldNode, JsonValue, StructureNode } from './types';
 
 export type PathSeg = string | number;
 
@@ -59,10 +59,12 @@ export function deepSet(data: Record<string, unknown>, path: PathSeg[], value: u
 
 /** 依据默认值初始化一份表单数据（布尔缺省 false，数组缺省空数组） */
 export function initData(node: FieldNode): JsonValue | undefined {
+  // 只在穿透片段引用之后的纯 FieldNode 视图上运行（见 resolveModel）
+  const field = (n: StructureNode): FieldNode => n as FieldNode;
   if (node.type === 'object') {
     const obj: Record<string, JsonValue> = {};
     for (const child of node.children ?? []) {
-      const v = initData(child);
+      const v = initData(field(child));
       if (v !== undefined) obj[child.name] = v;
     }
     return obj;
@@ -82,6 +84,8 @@ export function initItemData(item: FieldNode): JsonValue {
 }
 
 function validateNode(node: FieldNode, value: unknown, path: PathSeg[], errors: FieldError[]): void {
+  // 校验只在穿透片段引用之后的纯 FieldNode 视图上运行（见 resolveModel）
+  const field = (n: StructureNode): FieldNode => n as FieldNode;
   const required = !!node.required;
 
   if (node.type === 'object') {
@@ -90,7 +94,7 @@ function validateNode(node: FieldNode, value: unknown, path: PathSeg[], errors: 
       errors.push(err(node, path, '该分组为必填，请至少填写其中字段'));
     }
     for (const child of node.children ?? []) {
-      validateNode(child, obj[child.name], [...path, child.name], errors);
+      validateNode(field(child), obj[child.name], [...path, child.name], errors);
     }
     return;
   }
@@ -101,7 +105,7 @@ function validateNode(node: FieldNode, value: unknown, path: PathSeg[], errors: 
       errors.push(err(node, path, '至少添加一项'));
     }
     if (node.item) {
-      arr.forEach((item, i) => validateNode(node.item as FieldNode, item, [...path, i], errors));
+      arr.forEach((item, i) => validateNode(field(node.item!), item, [...path, i], errors));
     }
     return;
   }
@@ -172,8 +176,9 @@ function validateNode(node: FieldNode, value: unknown, path: PathSeg[], errors: 
 export function validateForm(root: FieldNode, data: FormData): FieldError[] {
   if (root.type !== 'object') return [{ path: [], loc: '', message: '根节点必须是 object' }];
   const errors: FieldError[] = [];
+  // 只在穿透片段引用之后的纯 FieldNode 视图上运行（见 resolveModel）
   for (const child of root.children ?? []) {
-    validateNode(child, (data as Record<string, unknown>)[child.name], [child.name], errors);
+    validateNode(child as FieldNode, (data as Record<string, unknown>)[child.name], [child.name], errors);
   }
   return errors;
 }

@@ -6,7 +6,7 @@
  * object -> group（嵌套字段分组）
  * array -> arraylist（可增删重复项）
  */
-import { FieldNode, WidgetType } from './types';
+import { FieldNode, StructureNode, WidgetType } from './types';
 
 export interface ControlNode {
   id: string;
@@ -61,6 +61,8 @@ function mapScalar(node: FieldNode): ControlNode {
 }
 
 export function mapControl(node: FieldNode): ControlNode {
+  // 控件树只在「穿透片段引用之后」的纯 FieldNode 视图上构建（见 resolveModel）
+  const field = (n: StructureNode): FieldNode => n as FieldNode;
   if (node.type === 'object') {
     const c: ControlNode = {
       id: node.id,
@@ -69,7 +71,7 @@ export function mapControl(node: FieldNode): ControlNode {
       widget: 'group',
       title: node.title || node.name || '',
       required: !!node.required,
-      children: (node.children ?? []).map(mapControl),
+      children: (node.children ?? []).map((child) => mapControl(field(child))),
     };
     if (node.description) c.description = node.description;
     return c;
@@ -82,7 +84,7 @@ export function mapControl(node: FieldNode): ControlNode {
       widget: 'arraylist',
       title: node.title || node.name,
       required: !!node.required,
-      item: node.item ? mapControl(node.item) : undefined,
+      item: node.item ? mapControl(field(node.item)) : undefined,
     };
     if (node.description) c.description = node.description;
     return c;
